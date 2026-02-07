@@ -1,4 +1,3 @@
-```groovy
 pipeline {
   agent any
 
@@ -211,4 +210,3 @@ kubectl -n ci delete pod -l app=kaniko --ignore-not-found=true >/dev/null 2>&1 |
     }
   }
 }
-```
