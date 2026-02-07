@@ -89,10 +89,12 @@ IMAGE_REPO=$(echo "$ECR_IMAGE" | cut -d: -f1)
 IMAGE_TAG=$(echo "$ECR_IMAGE" | cut -d: -f2)
 
 rm -rf helm-repo
-CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@${HELM_REPO_HTTPS#https://}"
-
-git clone "$CLONE_URL" helm-repo
+echo "Cloning helm repo..."
+git -c http.extraHeader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" \
+  clone "${HELM_REPO_HTTPS}" helm-repo
 cd helm-repo
+
+test -f "${HELM_VALUES_PATH}" || (echo "❌ values file not found: ${HELM_VALUES_PATH}" && find . -maxdepth 4 -name values.yaml && exit 1)
 
 python3 - <<PY
 import yaml
