@@ -3,10 +3,10 @@ pipeline {
 
   environment {
     AWS_REGION = "eu-central-1"
-    
+
     ECR_REPO_NAME    = "django"
     HELM_REPO_HTTPS  = "https://github.com/yaraaos/helm-charts-goit.git"
-    HELM_VALUES_PATH = "django-app-goit/values.yaml"
+    HELM_VALUES_PATH = "django-app/values.yaml"
   }
 
   stages {
@@ -28,16 +28,20 @@ AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 ECR_IMAGE="${ECR_REGISTRY}/${ECR_REPO_NAME}:${IMAGE_TAG}"
 
+# Ensure ECR repo exists
 aws ecr describe-repositories --region ${AWS_REGION} --repository-names ${ECR_REPO_NAME} >/dev/null 2>&1 \
  || aws ecr create-repository --region ${AWS_REGION} --repository-name ${ECR_REPO_NAME} >/dev/null
 
+# Create/update docker config secret for Kaniko
 TOKEN=$(aws ecr get-login-password --region ${AWS_REGION})
 kubectl -n ci delete secret ecr-docker-config >/dev/null 2>&1 || true
 kubectl -n ci create secret generic ecr-docker-config \
   --from-literal=config.json="{\\"auths\\":{\\"${ECR_REGISTRY}\\":{\\"username\\":\\"AWS\\",\\"password\\":\\"${TOKEN}\\"}}}"
 
+# Unique pod name
 POD="kaniko-${BUILD_NUMBER}-${IMAGE_TAG}"
 
+# Launch Kaniko pod (GIT context, no hostPath)
 cat <<YAML | kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -52,32 +56,30 @@ spec:
     image: gcr.io/kaniko-project/executor:latest
     args:
       - --context=git://github.com/yaraaos/django-app-goit.git#refs/heads/main
-      - --dockerfile=/workspace/Dockerfile
+      - --dockerfile=Dockerfile
       - --destination=${ECR_IMAGE}
     volumeMounts:
-      - name: workspace
-        mountPath: /workspace
       - name: docker-config
         mountPath: /kaniko/.docker
   volumes:
-    - name: workspace
-      hostPath:
-        path: "${WORKSPACE}"
-        type: Directory
     - name: docker-config
       secret:
         secretName: ecr-docker-config
 YAML
 
+# Wait for completion + stream logs
 kubectl -n ci wait --for=condition=Ready pod/${POD} --timeout=180s || true
-kubectl -n ci logs -f pod/${POD} -c kaniko
+kubectl -n ci logs -f pod/${POD} -c kaniko || true
 
+# Ensure pod succeeded
 PHASE=$(kubectl -n ci get pod ${POD} -o jsonpath='{.status.phase}')
 echo "Kaniko pod phase: ${PHASE}"
 test "${PHASE}" = "Succeeded"
 
+# Save image reference for next stage
 echo "${ECR_IMAGE}" > image.txt
 
+# Cleanup
 kubectl -n ci delete pod ${POD} --ignore-not-found=true
 '''
         }
@@ -98,6 +100,7 @@ rm -rf helm-repo
 git clone https://${GITHUB_TOKEN}@${HELM_REPO_HTTPS#https://} helm-repo
 cd helm-repo
 
+# Update values.yaml (image.repository + image.tag)
 python3 - <<PY
 import yaml
 path = "${HELM_VALUES_PATH}"
