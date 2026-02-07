@@ -28,20 +28,16 @@ AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 ECR_IMAGE="${ECR_REGISTRY}/${ECR_REPO_NAME}:${IMAGE_TAG}"
 
-# Ensure ECR repo exists
 aws ecr describe-repositories --region ${AWS_REGION} --repository-names ${ECR_REPO_NAME} >/dev/null 2>&1 \
  || aws ecr create-repository --region ${AWS_REGION} --repository-name ${ECR_REPO_NAME} >/dev/null
 
-# Create/update docker config secret for Kaniko
 TOKEN=$(aws ecr get-login-password --region ${AWS_REGION})
 kubectl -n ci delete secret ecr-docker-config >/dev/null 2>&1 || true
 kubectl -n ci create secret generic ecr-docker-config \
   --from-literal=config.json="{\\"auths\\":{\\"${ECR_REGISTRY}\\":{\\"username\\":\\"AWS\\",\\"password\\":\\"${TOKEN}\\"}}}"
 
-# Unique pod name
 POD="kaniko-${BUILD_NUMBER}-${IMAGE_TAG}"
 
-# Launch Kaniko pod (GIT context, no hostPath)
 cat <<YAML | kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -67,19 +63,15 @@ spec:
         secretName: ecr-docker-config
 YAML
 
-# Wait for completion + stream logs
 kubectl -n ci wait --for=condition=Ready pod/${POD} --timeout=180s || true
 kubectl -n ci logs -f pod/${POD} -c kaniko || true
 
-# Ensure pod succeeded
 PHASE=$(kubectl -n ci get pod ${POD} -o jsonpath='{.status.phase}')
 echo "Kaniko pod phase: ${PHASE}"
 test "${PHASE}" = "Succeeded"
 
-# Save image reference for next stage
 echo "${ECR_IMAGE}" > image.txt
 
-# Cleanup
 kubectl -n ci delete pod ${POD} --ignore-not-found=true
 '''
         }
