@@ -97,10 +97,11 @@ IMAGE_REPO=$(echo "$ECR_IMAGE" | cut -d: -f1)
 IMAGE_TAG=$(echo "$ECR_IMAGE" | cut -d: -f2)
 
 rm -rf helm-repo
-git clone https://${GITHUB_TOKEN}@${HELM_REPO_HTTPS#https://} helm-repo
+CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@${HELM_REPO_HTTPS#https://}"
+
+git clone "$CLONE_URL" helm-repo
 cd helm-repo
 
-# Update values.yaml (image.repository + image.tag)
 python3 - <<PY
 import yaml
 path = "${HELM_VALUES_PATH}"
